@@ -24,46 +24,77 @@ class env:
         self.s_ = None
         self.all_a = None
         self.all_s = None
-        # self.ranges = {
-        #     0: (12, 30),  # Column 0: Range -1 to 1
-        #     1: (10, 100),  # Column 1: Range -2 to 2
-        #     2: (100, 2500),
-        #     3: (0, 15),
-        #     4: (3, 9),
-        #     5: (0, 300),
-        # }
+
+        self.cal_mean_std()
+
+    def cal_mean_std(self):
+        """计算所有数据的全局均值和标准差"""
+        all_data = []
+
+        for file in self.file_name:
+            p = os.path.join(self.data_path, file)
+            df = pd.read_csv(p)
+
+            # 删除指定列
+            df = df.drop(columns=['sensor_sensorid2type'], errors='ignore')
+
+            all_data.append(df)
+
+        # 合并所有数据
+        df_all = pd.concat(all_data, axis=0)
+
+        # 计算均值和标准差
+        self.global_mean = df_all.mean().to_frame().T  # 存储在实例变量中
+        self.global_var = df_all.var().to_frame().T  # 存储在实例变量中
+
+        print("所有文件的均值:")
+        print(self.global_mean)
+        print("所有文件的标准差:")
+        print(self.global_var)
 
 
-    def reset(self, index):
+    def reset(self, index, norm_state=False, norm_act=True):
+        """重置环境"""
         try:
+            # 加载指定文件
             p = os.path.join(self.data_path, self.file_name[index % self.episode])
             self.data = pd.read_csv(p)
             self.step_n = 1
 
+            # 提取状态和动作
             self.all_s = self.data[self.state_par].to_numpy()
             self.all_a = self.data[self.act_par].to_numpy()
-            # 将 NumPy 数组转换为 Tensor
+
+            # 转换为 Tensor
             self.all_s = torch.from_numpy(self.all_s).float()
             self.all_a = torch.from_numpy(self.all_a).float()
-            # self.all_a = self.scale_actions(self.all_a)
 
+            # 归一化状态（norm_state）
+            if norm_state:
+                # 提取状态列的均值和方差
+                state_mean = self.global_mean[self.state_par].values.flatten()  # 扁平化成一维
+                state_var = self.global_var[self.state_par].values.flatten()  # 扁平化成一维
+                self.all_s = (self.all_s - torch.tensor(state_mean).view(1, -1)) / (
+                            torch.tensor(state_var).view(1, -1) + 1e-8)
+
+            # 归一化动作（norm_act）
+            if norm_act:
+                # 提取动作列的均值和方差
+                act_mean = self.global_mean[self.act_par].values.flatten()  # 扁平化成一维
+                act_var = self.global_var[self.act_par].values.flatten()  # 扁平化成一维
+                self.all_a = (self.all_a - torch.tensor(act_mean).view(1, -1)) / (
+                            torch.tensor(act_var).view(1, -1) + 1e-8)
+
+            # 选择第一个状态和动作
             self.s = self.all_s[0]
             self.a = self.all_a[0]
             self.s_ = self.all_s[1]
 
-            self.done = self.step_n == len(self.data)-1
+            # 判断是否结束
+            self.done = self.step_n == len(self.data) - 1
 
         except Exception as e:
             raise Exception('Datasets have issues!!!')
-
-    # def scale_actions(self, actions):
-    #     scaled_actions = torch.zeros_like(actions)  # Create a tensor to hold scaled actions
-    #     for i, (min_val, max_val) in self.ranges.items():
-    #         if max_val != min_val:  # Avoid division by zero
-    #             scaled_actions[:, i] = (actions[:, i] - min_val) / (max_val - min_val)
-    #         else:
-    #             scaled_actions[:, i] = 0  # If max_val == min_val, set scaled action to 0
-    #     return scaled_actions
 
     def step(self):
         self.s = self.all_s[self.step_n]
@@ -83,10 +114,6 @@ class env:
         # r += (s_[1] - s[1])
         return r
 
-if __name__ == '__main__':
-    e = env()
-    e.reset(0)
-    a, s_, r, done = e.step()
-    print(a, s_, r, done)
+
 
 

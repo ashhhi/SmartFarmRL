@@ -6,9 +6,11 @@ import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-
+import os
+from torch.utils.tensorboard import SummaryWriter
 import buffer
-
+current_path = os.path.dirname(os.path.abspath(__file__))
+writer = SummaryWriter(log_dir=current_path + '/logs/')
 
 @dataclass
 class Hyperparameters:
@@ -51,6 +53,7 @@ class Hyperparameters:
 	actor_hdim: int = 256
 	actor_activ: Callable = F.relu
 	actor_lr: float = 3e-4
+
 
 
 def AvgL1Norm(x, eps=1e-8):
@@ -252,8 +255,9 @@ class Agent(object):
 			fixed_zsa = self.fixed_encoder.zsa(fixed_zs, action)
 
 		Q = self.critic(state, action, fixed_zsa, fixed_zs)
-		td_loss = (Q - Q_target).abs()
-		critic_loss = LAP_huber(td_loss)
+		# td_loss = (Q - Q_target).abs()
+		# critic_loss = LAP_huber(td_loss)
+		critic_loss = nn.MSELoss()(Q, Q_target)
 
 		self.critic_optimizer.zero_grad()
 		critic_loss.backward()
@@ -262,8 +266,8 @@ class Agent(object):
 		#########################
 		# Update LAP
 		#########################
-		priority = td_loss.max(1)[0].clamp(min=self.hp.min_priority).pow(self.hp.alpha)
-		self.replay_buffer.update_priority(priority)
+		# priority = td_loss.max(1)[0].clamp(min=self.hp.min_priority).pow(self.hp.alpha)
+		# self.replay_buffer.update_priority(priority)
 
 		#########################
 		# Update Actor
@@ -280,6 +284,10 @@ class Agent(object):
 			self.actor_optimizer.zero_grad()
 			actor_loss.backward()
 			self.actor_optimizer.step()
+			print(critic_loss, actor_loss)
+			writer.add_scalar('Loss/critic_loss', critic_loss, self.training_steps)
+			writer.add_scalar('Loss/actor_loss', actor_loss, self.training_steps)
+			# writer.add_scalar('Reward/pred_q', reward, self.training_steps)
 
 		#########################
 		# Update Iteration
@@ -297,35 +305,37 @@ class Agent(object):
 
 
 
-	# If using checkpoints: run when each episode terminates
-	def maybe_train_and_checkpoint(self, ep_timesteps, ep_return):
-		self.eps_since_update += 1
-		self.timesteps_since_update += ep_timesteps
-
-		self.min_return = min(self.min_return, ep_return)
-
-		# End evaluation of current policy early
-		if self.min_return < self.best_min_return:
-			self.train_and_reset()
-
-		# Update checkpoint
-		elif self.eps_since_update == self.max_eps_before_update:
-			self.best_min_return = self.min_return
-			self.checkpoint_actor.load_state_dict(self.actor.state_dict())
-			self.checkpoint_encoder.load_state_dict(self.fixed_encoder.state_dict())
-			
-			self.train_and_reset()
 
 
-	# Batch training
-	def train_and_reset(self):
-		for _ in range(self.timesteps_since_update):
-			if self.training_steps == self.hp.steps_before_checkpointing:
-				self.best_min_return *= self.hp.reset_weight
-				self.max_eps_before_update = self.hp.max_eps_when_checkpointing
-			
-			self.train()
-
-		self.eps_since_update = 0
-		self.timesteps_since_update = 0
-		self.min_return = 1e8
+	# # If using checkpoints: run when each episode terminates
+	# def maybe_train_and_checkpoint(self, ep_timesteps, ep_return):
+	# 	self.eps_since_update += 1
+	# 	self.timesteps_since_update += ep_timesteps
+	#
+	# 	self.min_return = min(self.min_return, ep_return)
+	#
+	# 	# End evaluation of current policy early
+	# 	if self.min_return < self.best_min_return:
+	# 		self.train_and_reset()
+	#
+	# 	# Update checkpoint
+	# 	elif self.eps_since_update == self.max_eps_before_update:
+	# 		self.best_min_return = self.min_return
+	# 		self.checkpoint_actor.load_state_dict(self.actor.state_dict())
+	# 		self.checkpoint_encoder.load_state_dict(self.fixed_encoder.state_dict())
+	#
+	# 		self.train_and_reset()
+	#
+	#
+	# # Batch training
+	# def train_and_reset(self):
+	# 	for _ in range(self.timesteps_since_update):
+	# 		if self.training_steps == self.hp.steps_before_checkpointing:
+	# 			self.best_min_return *= self.hp.reset_weight
+	# 			self.max_eps_before_update = self.hp.max_eps_when_checkpointing
+	#
+	# 		self.train()
+	#
+	# 	self.eps_since_update = 0
+	# 	self.timesteps_since_update = 0
+	# 	self.min_return = 1e8

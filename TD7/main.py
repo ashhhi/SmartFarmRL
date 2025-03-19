@@ -7,6 +7,7 @@ import numpy as np
 import torch
 import TD7
 from env import env
+from tqdm import tqdm
 
 # RL
 seed = 0
@@ -19,12 +20,11 @@ num_episodes = 5000
 # File
 file_name = None
 
-
 epsilon = 0.5
 
 def train(RL_agent, env):
 	NUM_STEP = 0
-	for episode in range(num_episodes):
+	for episode in tqdm(range(num_episodes)):
 		env.reset(episode)
 		episode_reward = 0
 
@@ -51,7 +51,6 @@ def train(RL_agent, env):
 if __name__ == "__main__":
 	if not os.path.exists("./results"):
 		os.makedirs("./results")
-
 	e = env()
 	torch.manual_seed(seed)
 	np.random.seed(seed)

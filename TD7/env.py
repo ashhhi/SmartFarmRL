@@ -5,6 +5,8 @@ import pandas as pd
 
 class env:
     def __init__(self):
+        self.global_var = None
+        self.global_mean = None
         self.data_path = './data/'
         self.file_name = []
         for _, _, files in os.walk(self.data_path):
@@ -16,7 +18,8 @@ class env:
         self.step_n = 0
 
         self.state_par = ['Height', 'Coverage']
-        self.act_par = ['Soil humidity sensor', 'pH sensor', 'EC sensor', 'Flood sensor', 'Light sensor', 'Temperature sensor', 'Humidity sensor', 'CO2 sensor', 'Dissolved oxygen sensor', 'Wind speed sensor']
+        # self.act_par = ['Soil humidity sensor', 'pH sensor', 'EC sensor', 'Flood sensor', 'Light sensor', 'Temperature sensor', 'Humidity sensor', 'CO2 sensor', 'Dissolved oxygen sensor', 'Wind speed sensor']
+        self.act_par = ['pH sensor', 'EC sensor', 'Flood sensor', 'Light pattern', 'Light num']
 
         self.done = None
         self.s = None
@@ -47,10 +50,24 @@ class env:
         self.global_mean = df_all.mean().to_frame().T  # 存储在实例变量中
         self.global_var = df_all.var().to_frame().T  # 存储在实例变量中
 
-        print("所有文件的均值:")
-        print(self.global_mean)
-        print("所有文件的标准差:")
-        print(self.global_var)
+        # print("所有文件的均值:")
+        # print(self.global_mean)
+        # print("所有文件的标准差:")
+        # print(self.global_var)
+
+    def standardize(self, data, par):
+        mean = self.global_mean[par].values.flatten()  # 扁平化成一维
+        var = self.global_var[par].values.flatten()  # 扁平化成一维
+        d = (data - torch.tensor(mean).view(1, -1)) / (torch.sqrt(torch.tensor(var).view(1, -1) + 1e-8))
+        return d
+
+    def destandardize(self, data, par):
+        mean = self.global_mean[par].values.flatten()  # 扁平化成一维
+        var = self.global_var[par].values.flatten()  # 扁平化成一维
+        # print("mean:", mean, "var:", var)
+        data = torch.tensor(data, dtype=torch.float32)
+        d = data * (torch.sqrt(torch.tensor(var).view(1, -1) + 1e-8)) + torch.tensor(mean).view(1, -1)
+        return d
 
 
     def reset(self, index, norm_state=False, norm_act=True):
@@ -72,18 +89,11 @@ class env:
             # 归一化状态（norm_state）
             if norm_state:
                 # 提取状态列的均值和方差
-                state_mean = self.global_mean[self.state_par].values.flatten()  # 扁平化成一维
-                state_var = self.global_var[self.state_par].values.flatten()  # 扁平化成一维
-                self.all_s = (self.all_s - torch.tensor(state_mean).view(1, -1)) / (
-                            torch.tensor(state_var).view(1, -1) + 1e-8)
+                self.all_s = self.standardize(self.all_s, self.state_par)
 
             # 归一化动作（norm_act）
             if norm_act:
-                # 提取动作列的均值和方差
-                act_mean = self.global_mean[self.act_par].values.flatten()  # 扁平化成一维
-                act_var = self.global_var[self.act_par].values.flatten()  # 扁平化成一维
-                self.all_a = (self.all_a - torch.tensor(act_mean).view(1, -1)) / (
-                            torch.tensor(act_var).view(1, -1) + 1e-8)
+                self.all_a = self.standardize(self.all_a, self.act_par)
 
             # 选择第一个状态和动作
             self.s = self.all_s[0]
@@ -92,7 +102,6 @@ class env:
 
             # 判断是否结束
             self.done = self.step_n == len(self.data) - 1
-
         except Exception as e:
             raise Exception('Datasets have issues!!!')
 

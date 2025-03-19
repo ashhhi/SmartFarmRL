@@ -58,7 +58,7 @@ class Hyperparameters:
 
 def AvgL1Norm(x, eps=1e-8):
 	return x/x.abs().mean(-1,keepdim=True).clamp(min=eps)
-
+	# return x
 
 def LAP_huber(x, min_priority=1):
 	return torch.where(x < min_priority, 0.5 * x.pow(2), min_priority * x).sum(1).mean()
@@ -74,15 +74,14 @@ class Actor(nn.Module):
 		self.l1 = nn.Linear(zs_dim + hdim, hdim)
 		self.l2 = nn.Linear(hdim, hdim)
 		self.l3 = nn.Linear(hdim, action_dim)
-		
 
 	def forward(self, state, zs):
 		a = AvgL1Norm(self.l0(state))
 		a = torch.cat([a, zs], 1)
 		a = self.activ(self.l1(a))
 		a = self.activ(self.l2(a))
-		return torch.tanh(self.l3(a))
-
+		# return torch.tanh(self.l3(a))
+		return self.l3(a)
 
 class Encoder(nn.Module):
 	def __init__(self, state_dim, action_dim, zs_dim=256, hdim=256, activ=F.elu):
@@ -152,9 +151,9 @@ class Critic(nn.Module):
 
 
 class Agent(object):
-	def __init__(self, state_dim, action_dim, offline=False, hp=Hyperparameters()):
+	def __init__(self, state_dim, action_dim, offline=True, hp=Hyperparameters()):
 		# Changing hyperparameters example: hp=Hyperparameters(batch_size=128)
-		
+
 		self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 		self.hp = hp
 
@@ -211,7 +210,6 @@ class Agent(object):
 			# 这里要改
 			return action.clamp(-1,1).cpu().data.numpy().flatten()
 
-
 	def update(self, done):
 		self.training_steps += 1
 		BATCH_SIZE = 4
@@ -255,9 +253,11 @@ class Agent(object):
 			fixed_zsa = self.fixed_encoder.zsa(fixed_zs, action)
 
 		Q = self.critic(state, action, fixed_zsa, fixed_zs)
-		# td_loss = (Q - Q_target).abs()
-		# critic_loss = LAP_huber(td_loss)
-		critic_loss = nn.MSELoss()(Q, Q_target)
+
+		# huber loss
+		td_loss = (Q - Q_target).abs()
+		critic_loss = LAP_huber(td_loss)
+		# critic_loss = nn.MSELoss()(Q, Q_target)
 
 		self.critic_optimizer.zero_grad()
 		critic_loss.backward()
@@ -266,8 +266,8 @@ class Agent(object):
 		#########################
 		# Update LAP
 		#########################
-		# priority = td_loss.max(1)[0].clamp(min=self.hp.min_priority).pow(self.hp.alpha)
-		# self.replay_buffer.update_priority(priority)
+		priority = td_loss.max(1)[0].clamp(min=self.hp.min_priority).pow(self.hp.alpha)
+		self.replay_buffer.update_priority(priority)
 
 		#########################
 		# Update Actor
@@ -276,18 +276,20 @@ class Agent(object):
 			actor = self.actor(state, fixed_zs)
 			fixed_zsa = self.fixed_encoder.zsa(fixed_zs, actor)
 			Q = self.critic(state, actor, fixed_zsa, fixed_zs)
-
-			actor_loss = -Q.mean() 
+			actor_loss = -Q.mean()
 			if self.offline:
 				actor_loss = actor_loss + self.hp.lmbda * Q.abs().mean().detach() * F.mse_loss(actor, action)
 
 			self.actor_optimizer.zero_grad()
 			actor_loss.backward()
 			self.actor_optimizer.step()
-			print(critic_loss, actor_loss)
+			# print(critic_loss, actor_loss)
 			writer.add_scalar('Loss/critic_loss', critic_loss, self.training_steps)
 			writer.add_scalar('Loss/actor_loss', actor_loss, self.training_steps)
-			# writer.add_scalar('Reward/pred_q', reward, self.training_steps)
+
+		if self.training_steps % 10000 == 0:
+			torch.save(self.actor.state_dict(), f'results/actor_{self.training_steps}.pt')
+			torch.save(self.encoder.state_dict(), f'results/encoder_{self.training_steps}.pt')
 
 		#########################
 		# Update Iteration
@@ -302,40 +304,5 @@ class Agent(object):
 
 			self.max_target = self.max
 			self.min_target = self.min
-
-
-
-
-
-	# # If using checkpoints: run when each episode terminates
-	# def maybe_train_and_checkpoint(self, ep_timesteps, ep_return):
-	# 	self.eps_since_update += 1
-	# 	self.timesteps_since_update += ep_timesteps
-	#
-	# 	self.min_return = min(self.min_return, ep_return)
-	#
-	# 	# End evaluation of current policy early
-	# 	if self.min_return < self.best_min_return:
-	# 		self.train_and_reset()
-	#
-	# 	# Update checkpoint
-	# 	elif self.eps_since_update == self.max_eps_before_update:
-	# 		self.best_min_return = self.min_return
-	# 		self.checkpoint_actor.load_state_dict(self.actor.state_dict())
-	# 		self.checkpoint_encoder.load_state_dict(self.fixed_encoder.state_dict())
-	#
-	# 		self.train_and_reset()
-	#
-	#
-	# # Batch training
-	# def train_and_reset(self):
-	# 	for _ in range(self.timesteps_since_update):
-	# 		if self.training_steps == self.hp.steps_before_checkpointing:
-	# 			self.best_min_return *= self.hp.reset_weight
-	# 			self.max_eps_before_update = self.hp.max_eps_when_checkpointing
-	#
-	# 		self.train()
-	#
-	# 	self.eps_since_update = 0
-	# 	self.timesteps_since_update = 0
-	# 	self.min_return = 1e8
+		torch.save(self.actor.state_dict(), f'results/actor_final.pt')
+		torch.save(self.encoder.state_dict(), f'results/encoder_final.pt')
